@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FSRU: Reading Rumors in the Frequency Domain</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#edf1f5;--ink:#112240;--mute:#55657d;--line:#cbd5e1;--wave:#1f5fbf;--hot:#d97a00;--panel:#f8fafc}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1626;--ink:#e6ecf5;--mute:#93a3bb;--line:#26354d;--wave:#6aa5ff;--hot:#ffb04a;--panel:#142038}}
+:root[data-theme="dark"]{--bg:#0e1626;--ink:#e6ecf5;--mute:#93a3bb;--line:#26354d;--wave:#6aa5ff;--hot:#ffb04a;--panel:#142038}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.65 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:40px 20px 72px}
+h1,h2,h3{font-family:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif;line-height:1.1;margin:0}
+h1{font-size:clamp(2.3rem,8vw,4rem);font-weight:800;letter-spacing:-.02em}
+h2{font-size:1.9rem;font-weight:700;margin:64px 0 14px;letter-spacing:-.01em}
+h3{font-size:1.15rem;font-weight:700;margin:0 0 4px}
+p{margin:0 0 14px;max-width:62ch}
+.lede{font-size:1.2rem;color:var(--mute);margin-top:18px}
+.demo{margin-top:28px;border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:16px}
+canvas{display:block;width:100%;height:200px}
+.ctl{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+.ctl label{font-weight:500}
+input[type=range]{flex:1;min-width:160px;accent-color:var(--hot)}
+output{font-weight:700;min-width:2ch;color:var(--hot)}
+.cap{color:var(--mute);font-size:.95rem;margin:10px 0 0}
+.flow{display:flex;flex-direction:column;gap:0;margin:22px 0;border-left:3px solid var(--wave);padding-left:18px}
+.step{padding:10px 0 14px}
+.step p{margin:0;color:var(--mute)}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;min-width:420px;font-size:.95rem}
+th,td{text-align:left;padding:9px 14px;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+th{font-weight:500;color:var(--mute)}
+td:first-child{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9rem}
+a{color:var(--wave);text-underline-offset:3px}
+.note{border-left:3px solid var(--hot);padding:2px 0 2px 16px;margin:22px 0}
+footer{margin-top:56px;color:var(--mute);font-size:.9rem}
+@media (prefers-reduced-motion:no-preference){.demo canvas{transition:opacity .2s}}
+</style>
+</head>
+<body>
+<main>
+<h1>Rumors have a frequency</h1>
+<p class="lede">FSRU is a rumor detector that reads a post’s text and image together, then makes its decision in the frequency spectrum instead of the raw features.</p>
+
+<div class="demo" role="group" aria-label="Frequency filter demo">
+<canvas id="sig" aria-label="A signal and its filtered version"></canvas>
+<canvas id="spec" style="height:90px" aria-label="Frequency spectrum bars"></canvas>
+<div class="ctl">
+<label for="cut">Keep frequencies up to</label>
+<input id="cut" type="range" min="1" max="40" value="6">
+<output id="cv">6</output>
+</div>
+<p class="cap">Drag the slider. The faint line is the original signal, the bold line is what remains after the higher frequencies are removed. Bars are the spectrum; amber bars are kept.</p>
+</div>
+
+<h2>The problem</h2>
+<p>Social media posts rarely carry one kind of evidence. A rumor might pair a dramatic caption with a recycled photo. Detectors that look at text alone, or image alone, miss mismatches between the two, so modern ones combine both.</p>
+<p>The hard part is how to combine them. Text and image features live in very different spaces, and simply concatenating them lets noise from one side leak into the other.</p>
+
+<h2>The idea</h2>
+<p>Any feature vector can be written as a sum of waves, from slow and broad to fast and fine. A Fourier transform makes that view explicit. In the paper (Lao et al., AAAI 2024), text and image features are moved into this spectrum, where a learnable filter decides which frequencies carry useful signal and which are noise, and the two modalities are fused there.</p>
+<p>The demo above is the intuition: a fixed cutoff is a blunt tool. FSRU learns its filters from data instead.</p>
+
+<h2>How the pipeline runs</h2>
+<div class="flow">
+<div class="step"><h3>1. Encode the text</h3><p>Words become 32-dimensional embeddings, padded or cut to 50 tokens.</p></div>
+<div class="step"><h3>2. Encode the image</h3><p>The 224 × 224 image is split into 16 × 16 patches, like a Vision Transformer.</p></div>
+<div class="step"><h3>3. Move to the spectrum</h3><p>Both feature sets go through a Fourier transform.</p></div>
+<div class="step"><h3>4. Filter and fuse</h3><p>A learnable filter bank keeps the useful frequencies, and the two spectra are combined.</p></div>
+<div class="step"><h3>5. Classify</h3><p>The fused features give a label: rumor or non-rumor. Extra loss terms, weighted by alpha and beta, help align the two modalities.</p></div>
+</div>
+
+<h2>Settings in this implementation</h2>
+<p>These are the defaults in <code>arguments.py</code> of the repository.</p>
+<div class="scroll"><table>
+<tr><th>Setting</th><th>Value</th><th>Meaning</th></tr>
+<tr><td>d_model</td><td>256</td><td>Model dimension</td></tr>
+<tr><td>d_text</td><td>32</td><td>Text embedding size (Weibo)</td></tr>
+<tr><td>patch_size</td><td>16</td><td>Image patch size</td></tr>
+<tr><td>num_filter</td><td>2</td><td>Filters in the filter bank</td></tr>
+<tr><td>num_layer</td><td>1</td><td>Block layers</td></tr>
+<tr><td>alpha, beta</td><td>0.2, 0.2</td><td>Loss weights</td></tr>
+<tr><td>lr</td><td>0.01</td><td>Learning rate, decayed by 0.98 every 5 epochs</td></tr>
+<tr><td>batch_size</td><td>64</td><td>Samples per step</td></tr>
+<tr><td>k</td><td>5</td><td>Folds for cross-validation</td></tr>
+</table></div>
+
+<h2>My run</h2>
+<p>I ran the code in Google Colab on a T4 GPU with the Weibo dataset, which pairs Chinese tweets with images and labels each one as rumor or non-rumor.</p>
+<p>Three things needed fixing along the way:</p>
+<p><strong>Memory.</strong> The loader holds every image in RAM, so I limited it to the first 1,500 images from each folder, 3,000 in total.</p>
+<p><strong>Data format.</strong> The download contained raw tweet text files, not the CSV files the code reads. I wrote a short conversion step that tokenizes the Chinese text with jieba and builds the train and test CSVs.</p>
+<p><strong>Embeddings.</strong> There was no pretrained word2vec file, so the text embeddings start from random vectors, which the code supports.</p>
+<div class="note"><p>Results (accuracy and F1 from the k-fold run) will be added here once the training finishes.</p></div>
+
+<footer>
+<p>Code: <a href="https://github.com/dm4m/FSRU">original FSRU repository</a> and <a href="https://github.com/harishkumaran332-code/Python-">my copy with the run notes</a>.</p>
+</footer>
+</main>
+
+<script>
+(function(){
+var N=128, x=[], re=[], im=[], K=6;
+for(var n=0;n<N;n++){
+  var t=2*Math.PI*n/N;
+  x.push(Math.sin(2*t)+0.6*Math.sin(5*t+0.5)+0.35*Math.sin(17*t)+0.28*Math.sin(29*t+1)+0.18*Math.sin(37*t+2));
+}
+for(var k=0;k<=N/2;k++){
+  var a=0,b=0;
+  for(var m=0;m<N;m++){a+=x[m]*Math.cos(2*Math.PI*k*m/N);b-=x[m]*Math.sin(2*Math.PI*k*m/N);}
+  re.push(a);im.push(b);
+}
+function recon(K){
+  var y=[];
+  for(var n=0;n<N;n++){
+    var s=re[0];
+    for(var k=1;k<=K;k++){s+=2*(re[k]*Math.cos(2*Math.PI*k*n/N)-im[k]*Math.sin(2*Math.PI*k*n/N));}
+    y.push(s/N);
+  }
+  return y;
+}
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+function setup(c){
+  var r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;
+  c.width=r.width*d;c.height=r.height*d;
+  var g=c.getContext("2d");g.setTransform(d,0,0,d,0,0);
+  g.clearRect(0,0,r.width,r.height);
+  return {g:g,w:r.width,h:r.height};
+}
+function line(g,w,h,arr,color,width,alpha){
+  g.globalAlpha=alpha;g.strokeStyle=color;g.lineWidth=width;g.beginPath();
+  for(var n=0;n<arr.length;n++){
+    var px=n/(arr.length-1)*w, py=h/2-arr[n]*h/5.2;
+    if(n===0)g.moveTo(px,py);else g.lineTo(px,py);
+  }
+  g.stroke();g.globalAlpha=1;
+}
+function draw(){
+  var s=setup(document.getElementById("sig"));
+  line(s.g,s.w,s.h,x,css("--wave"),1.5,0.35);
+  line(s.g,s.w,s.h,recon(K),css("--hot"),3,1);
+  var p=setup(document.getElementById("spec")),mx=0,show=40,k;
+  for(k=1;k<=show;k++){mx=Math.max(mx,Math.hypot(re[k],im[k]));}
+  var bw=p.w/show;
+  for(k=1;k<=show;k++){
+    var mag=Math.hypot(re[k],im[k])/mx,bh=Math.max(1,mag*(p.h-8));
+    p.g.fillStyle=k<=K?css("--hot"):css("--line");
+    p.g.fillRect((k-1)*bw+1,p.h-bh,bw-2,bh);
+  }
+}
+var cut=document.getElementById("cut"),cv=document.getElementById("cv");
+cut.addEventListener("input",function(){K=+cut.value;cv.textContent=K;draw();});
+window.addEventListener("resize",draw);
+if(window.matchMedia){window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",draw);}
+draw();
+})();
+</script>
+</body>
+</html>
